@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { Color, GoalParams, GoalType, PieceLetter } from '../api/types'
+import type { Color, GoalParams, GoalType, OpponentMode, PieceLetter } from '../api/types'
 import {
   GOAL_LABELS,
   PIECE_NAMES,
@@ -7,7 +7,7 @@ import {
   capitalize,
   squaresWithPiece,
 } from '../lib/chess'
-import { PIECE_LETTERS, type ScenarioDraft, defaultGoal } from '../lib/scenario'
+import { OPPONENT_LABELS, PIECE_LETTERS, type ScenarioDraft, defaultGoal } from '../lib/scenario'
 
 interface Props {
   value: ScenarioDraft
@@ -83,6 +83,19 @@ export function MetadataForm({ value, placement, onChange }: Props) {
           </select>
         </label>
       </div>
+      <label>
+        Opponent
+        <select
+          value={value.opponent_mode}
+          onChange={(event) => set('opponent_mode', event.target.value as OpponentMode)}
+        >
+          {Object.entries(OPPONENT_LABELS).map(([mode, label]) => (
+            <option key={mode} value={mode}>
+              {label}
+            </option>
+          ))}
+        </select>
+      </label>
 
       <fieldset>
         <legend>Goal</legend>

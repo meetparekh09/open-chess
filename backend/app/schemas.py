@@ -8,7 +8,8 @@ GoalType = Literal["free", "capture", "survive", "checkmate", "promote"]
 PieceLetter = Literal["p", "n", "b", "r", "q", "k"]
 GoalStatusValue = Literal["in_progress", "success", "fail"]
 AttemptResult = Literal["success", "fail", "abandoned"]
-OpponentMode = Literal["manual"]
+OpponentMode = Literal["manual", "auto", "goal_search", "stockfish"]
+EngineName = Literal["goal_search", "stockfish"]
 
 
 class GoalParams(BaseModel):
@@ -77,6 +78,27 @@ class GoalStatus(BaseModel):
     detail: str
     moves_used: int
     ply_count: int
+
+
+class EngineMoveRequest(BaseModel):
+    start_fen: str
+    moves: list[str] = Field(default_factory=list)
+    goal: Goal = Field(default_factory=Goal)
+    mode: OpponentMode = "auto"
+    think_ms: int = Field(default=1000, ge=100, le=5000)
+
+
+class EngineMoveResponse(MoveResult):
+    engine: EngineName
+    depth: int | None
+    score: int | None
+    note: str
+
+
+class EngineStatus(BaseModel):
+    stockfish_available: bool
+    stockfish_name: str | None
+    stockfish_path: str | None
 
 
 class SolutionStepIn(BaseModel):

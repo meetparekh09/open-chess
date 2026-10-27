@@ -1,7 +1,27 @@
-import type { Color, Goal, GoalType, PieceLetter, ScenarioInput } from '../api/types'
+import type {
+  Color,
+  EngineName,
+  Goal,
+  GoalType,
+  OpponentMode,
+  PieceLetter,
+  ScenarioInput,
+} from '../api/types'
 import { type Placement, opposite, squaresWithPiece } from './chess'
 
 export type ScenarioDraft = Omit<ScenarioInput, 'start_fen'>
+
+export const OPPONENT_LABELS: Record<OpponentMode, string> = {
+  manual: 'Manual (move both sides)',
+  auto: 'Computer: auto',
+  goal_search: 'Computer: goal search',
+  stockfish: 'Computer: Stockfish',
+}
+
+export const ENGINE_LABELS: Record<EngineName, string> = {
+  goal_search: 'Goal search',
+  stockfish: 'Stockfish',
+}
 
 export const EMPTY_DRAFT: ScenarioDraft = {
   title: '',

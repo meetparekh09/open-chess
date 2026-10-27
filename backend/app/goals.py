@@ -114,98 +114,143 @@ class _TargetTracker:
             if rook_from == self.square:
                 self.square = chess.square(5 if kingside else 3, rank)
 
+    def snapshot(self) -> tuple[chess.Square | None, int, bool]:
+        return self.square, self.remaining, self.captured
 
-def evaluate_goal(goal: Goal, start_fen: str, moves: list[str]) -> GoalResult:
-    board = parse_fen(start_fen)
-    errors = validate_goal(goal, board)
-    if errors:
-        raise GoalError(" ".join(errors))
+    def restore(self, snapshot: tuple[chess.Square | None, int, bool]) -> None:
+        self.square, self.remaining, self.captured = snapshot
 
-    params = goal.params
-    tracker = None
-    target_label = ""
-    if goal.type in ("capture", "survive"):
-        target_color = COLORS_BY_NAME[params.color]
-        piece_type = PIECE_TYPES_BY_LETTER[params.piece]
-        square = chess.parse_square(params.square) if params.square else None
-        tracker = _TargetTracker(board, target_color, piece_type, square)
-        actor = not target_color
-        target_label = chess.piece_name(piece_type)
-    elif goal.type in ("checkmate", "promote"):
-        actor = COLORS_BY_NAME[params.color]
-    else:
-        actor = None
 
-    actor_moves = 0
-    promoted = False
+class GoalState:
+    """A goal being played out on a board; supports push/pop so searches can reuse it.
 
-    def check(ply: int) -> GoalResult | None:
+    ``actor`` is the side whose moves are counted (``None`` for free practice).
+    """
+
+    def __init__(self, goal: Goal, board: chess.Board):
+        errors = validate_goal(goal, board)
+        if errors:
+            raise GoalError(" ".join(errors))
+        self.goal = goal
+        self.params = goal.params
+        self.board = board
+        self.tracker: _TargetTracker | None = None
+        self.target_label = ""
+        self.actor: chess.Color | None = None
+        if goal.type in ("capture", "survive"):
+            target_color = COLORS_BY_NAME[self.params.color]
+            piece_type = PIECE_TYPES_BY_LETTER[self.params.piece]
+            square = chess.parse_square(self.params.square) if self.params.square else None
+            self.tracker = _TargetTracker(board, target_color, piece_type, square)
+            self.actor = not target_color
+            self.target_label = chess.piece_name(piece_type)
+        elif goal.type in ("checkmate", "promote"):
+            self.actor = COLORS_BY_NAME[self.params.color]
+        self.actor_moves = 0
+        self.promoted = False
+        self.ply = 0
+        self._stack: list[tuple] = []
+
+    def push(self, move: chess.Move) -> None:
+        tracker_snapshot = self.tracker.snapshot() if self.tracker else None
+        self._stack.append((tracker_snapshot, self.actor_moves, self.promoted))
+        mover = self.board.turn
+        if self.tracker is not None:
+            self.tracker.before_push(self.board, move)
+        self.board.push(move)
+        self.ply += 1
+        if mover == self.actor:
+            self.actor_moves += 1
+            self.promoted = self.promoted or move.promotion is not None
+
+    def pop(self) -> chess.Move:
+        tracker_snapshot, self.actor_moves, self.promoted = self._stack.pop()
+        if self.tracker is not None:
+            self.tracker.restore(tracker_snapshot)
+        self.ply -= 1
+        return self.board.pop()
+
+    def push_uci(self, uci: str) -> None:
+        try:
+            move = parse_legal_move(self.board, uci)
+        except IllegalMoveError as exc:
+            raise IllegalMoveError(f"Move {self.ply + 1}: {exc}") from exc
+        self.push(move)
+
+    def status(self) -> GoalResult | None:
+        """The decided result in the current position, or ``None`` while still undecided."""
+        goal, board, tracker = self.goal, self.board, self.tracker
+        actor_moves, label = self.actor_moves, self.target_label
+        limit = self.params.max_moves
+
         def result(status: str, detail: str) -> GoalResult:
-            return GoalResult(status, detail, actor_moves, ply)
+            return GoalResult(status, detail, actor_moves, self.ply)
 
+        if goal.type == "free":
+            return None
         no_moves = not any(board.legal_moves)
         side_to_move = COLOR_NAMES[board.turn]
-        limit = params.max_moves
 
         if goal.type == "capture":
             if tracker.captured:
-                return result(
-                    "success", f"Captured the {target_label} in {_plural(actor_moves, 'move')}."
-                )
+                return result("success", f"Captured the {label} in {_plural(actor_moves, 'move')}.")
             if limit is not None and actor_moves >= limit:
-                return result("fail", f"The {target_label} survived {_plural(limit, 'move')}.")
+                return result("fail", f"The {label} survived {_plural(limit, 'move')}.")
             if no_moves:
                 return result("fail", f"{side_to_move.capitalize()} has no legal moves.")
         elif goal.type == "survive":
             if tracker.captured:
                 return result(
-                    "fail", f"The {target_label} was captured after {_plural(actor_moves, 'move')}."
+                    "fail", f"The {label} was captured after {_plural(actor_moves, 'move')}."
                 )
             if actor_moves >= limit:
-                return result("success", f"The {target_label} survived {_plural(limit, 'move')}.")
+                return result("success", f"The {label} survived {_plural(limit, 'move')}.")
             if no_moves:
-                return result("success", f"No legal moves left; the {target_label} survived.")
+                return result("success", f"No legal moves left; the {label} survived.")
         elif goal.type == "checkmate":
             if board.is_checkmate():
-                if board.turn != actor:
+                if board.turn != self.actor:
                     return result("success", f"Checkmate in {_plural(actor_moves, 'move')}.")
-                return result("fail", f"{COLOR_NAMES[actor].capitalize()} was checkmated.")
+                return result("fail", f"{COLOR_NAMES[self.actor].capitalize()} was checkmated.")
             if no_moves:
                 return result("fail", "Stalemate.")
             if limit is not None and actor_moves >= limit:
                 return result("fail", f"No checkmate within {_plural(limit, 'move')}.")
         elif goal.type == "promote":
-            if promoted:
+            if self.promoted:
                 return result("success", f"Promoted in {_plural(actor_moves, 'move')}.")
             if limit is not None and actor_moves >= limit:
                 return result("fail", f"No promotion within {_plural(limit, 'move')}.")
-            if not board.pieces(chess.PAWN, actor):
+            if not board.pieces(chess.PAWN, self.actor):
                 return result("fail", "No pawns left to promote.")
             if no_moves:
                 return result("fail", f"{side_to_move.capitalize()} has no legal moves.")
         return None
 
-    outcome = check(0)
+    def progress(self) -> GoalResult:
+        if self.goal.type == "free":
+            return GoalResult("in_progress", "Free practice.", self.ply, self.ply)
+        limit = self.params.max_moves
+        used = f"{self.actor_moves} of {limit}" if limit else str(self.actor_moves)
+        return GoalResult("in_progress", f"Moves used: {used}.", self.actor_moves, self.ply)
+
+
+def goal_state(goal: Goal, start_fen: str, moves: list[str]) -> GoalState:
+    """Replay every move from the start position (without stopping at a decided result)."""
+    state = GoalState(goal, parse_fen(start_fen))
+    for uci in moves:
+        state.push_uci(uci)
+    return state
+
+
+def evaluate_goal(goal: Goal, start_fen: str, moves: list[str]) -> GoalResult:
+    state = GoalState(goal, parse_fen(start_fen))
+    outcome = state.status()
     if outcome is not None:
         return outcome
-    for ply, uci in enumerate(moves, start=1):
-        try:
-            move = parse_legal_move(board, uci)
-        except IllegalMoveError as exc:
-            raise IllegalMoveError(f"Move {ply}: {exc}") from exc
-        mover = board.turn
-        if tracker is not None:
-            tracker.before_push(board, move)
-        board.push(move)
-        if mover == actor:
-            actor_moves += 1
-            promoted = promoted or move.promotion is not None
-        outcome = check(ply)
+    for uci in moves:
+        state.push_uci(uci)
+        outcome = state.status()
         if outcome is not None:
             return outcome
-
-    if goal.type == "free":
-        return GoalResult("in_progress", "Free practice.", len(moves), len(moves))
-    limit = params.max_moves
-    used = f"{actor_moves} of {limit}" if limit else str(actor_moves)
-    return GoalResult("in_progress", f"Moves used: {used}.", actor_moves, len(moves))
+    return state.progress()

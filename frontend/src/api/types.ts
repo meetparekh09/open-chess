@@ -3,6 +3,8 @@ export type GoalType = 'free' | 'capture' | 'survive' | 'checkmate' | 'promote'
 export type PieceLetter = 'p' | 'n' | 'b' | 'r' | 'q' | 'k'
 export type GoalStatusValue = 'in_progress' | 'success' | 'fail'
 export type AttemptResult = 'success' | 'fail' | 'abandoned'
+export type OpponentMode = 'manual' | 'auto' | 'goal_search' | 'stockfish'
+export type EngineName = 'goal_search' | 'stockfish'
 
 export interface GoalParams {
   color?: Color | null
@@ -41,6 +43,20 @@ export interface MoveResult {
   position: PositionInfo
 }
 
+export interface EngineMoveResult extends MoveResult {
+  engine: EngineName
+  depth: number | null
+  /** From the engine's point of view; positive is good for the engine. */
+  score: number | null
+  note: string
+}
+
+export interface EngineStatus {
+  stockfish_available: boolean
+  stockfish_name: string | null
+  stockfish_path: string | null
+}
+
 export interface GoalStatus {
   status: GoalStatusValue
   detail: string
@@ -69,7 +85,7 @@ export interface ScenarioInput {
   difficulty: number
   tags: string[]
   source: string
-  opponent_mode: 'manual'
+  opponent_mode: OpponentMode
 }
 
 export interface Attempt {

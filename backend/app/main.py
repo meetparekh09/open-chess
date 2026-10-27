@@ -5,13 +5,15 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.db import init_db
-from app.routers import attempts, goals, positions, scenarios
+from app.engine.stockfish import close_stockfish
+from app.routers import attempts, engine, goals, positions, scenarios
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     init_db()
     yield
+    close_stockfish()
 
 
 app = FastAPI(title="Open Chess", lifespan=lifespan)
@@ -25,6 +27,7 @@ app.include_router(positions.router)
 app.include_router(goals.router)
 app.include_router(scenarios.router)
 app.include_router(attempts.router)
+app.include_router(engine.router)
 
 
 @app.get("/api/health")

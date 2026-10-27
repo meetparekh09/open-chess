@@ -1,13 +1,24 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useEffectEvent, useRef, useState } from 'react'
 import { Link, useLocation, useParams, useSearchParams } from 'react-router-dom'
-import { api, errorMessage } from '../api/client'
-import type { Attempt, AttemptResult, Color, Goal, GoalStatus, ScenarioDetail } from '../api/types'
+import { ApiError, api, errorMessage } from '../api/client'
+import type {
+  Attempt,
+  AttemptResult,
+  Color,
+  EngineMoveResult,
+  EngineStatus,
+  Goal,
+  GoalStatus,
+  OpponentMode,
+  ScenarioDetail,
+} from '../api/types'
 import { Board } from '../components/Board'
 import { FenBar } from '../components/FenBar'
 import { GoalPanel } from '../components/GoalPanel'
 import { MoveList } from '../components/MoveList'
 import { useGame } from '../hooks/useGame'
 import { START_FEN, capitalize, formatDuration, opposite } from '../lib/chess'
+import { ENGINE_LABELS, OPPONENT_LABELS } from '../lib/scenario'
 import type { PracticeState } from './EditorPage'
 
 interface Setup {
@@ -16,9 +27,18 @@ interface Setup {
   fen: string
   goal: Goal
   playerSide: Color
+  opponentMode: OpponentMode
 }
 
 const FREE_GOAL: Goal = { type: 'free', params: {} }
+
+const THINK_TIMES_MS = [200, 500, 1000, 2000, 3000]
+const THINK_TIME_KEY = 'open-chess.think-ms'
+
+function storedThinkMs(): number {
+  const value = Number(localStorage.getItem(THINK_TIME_KEY))
+  return THINK_TIMES_MS.includes(value) ? value : 1000
+}
 
 const RESULT_LABELS: Record<AttemptResult, string> = {
   success: 'Success',
@@ -46,6 +66,12 @@ export function PracticePage() {
   const [hintPly, setHintPly] = useState<number | null>(null)
   const [saveError, setSaveError] = useState<string | null>(null)
   const savingRef = useRef(false)
+  const [modeOverride, setModeOverride] = useState<OpponentMode | null>(null)
+  const [thinkMs, setThinkMs] = useState(storedThinkMs)
+  const [engineReply, setEngineReply] = useState<EngineMoveResult | null>(null)
+  // Keyed by request so a failure only shows (and stops "Thinking...") for that request.
+  const [engineError, setEngineError] = useState<{ key: string; message: string } | null>(null)
+  const [engineStatus, setEngineStatus] = useState<EngineStatus | null>(null)
 
   let setup: Setup | null = null
   if (scenario) {
@@ -55,6 +81,7 @@ export function PracticePage() {
       fen: scenario.start_fen,
       goal: scenario.goal,
       playerSide: scenario.player_side,
+      opponentMode: scenario.opponent_mode,
     }
   } else if (scenarioId === null && adHoc) {
     setup = {
@@ -63,6 +90,7 @@ export function PracticePage() {
       fen: adHoc.fen,
       goal: adHoc.draft.goal,
       playerSide: adHoc.draft.player_side,
+      opponentMode: adHoc.draft.opponent_mode,
     }
   } else if (scenarioId === null) {
     setup = {
@@ -71,13 +99,14 @@ export function PracticePage() {
       fen: searchParams.get('fen') ?? START_FEN,
       goal: FREE_GOAL,
       playerSide: 'white',
+      opponentMode: 'manual',
     }
   }
   const goal = setup?.goal ?? FREE_GOAL
   const setupFen = setup?.fen
   const setupSide = setup?.playerSide
 
-  const { load } = game
+  const { load, pushPly } = game
   useEffect(() => {
     if (scenarioId === null) {
       return
@@ -90,12 +119,17 @@ export function PracticePage() {
   }, [scenarioId])
 
   useEffect(() => {
+    api.engineStatus().then(setEngineStatus, () => {})
+  }, [])
+
+  useEffect(() => {
     if (setupFen) {
       load(setupFen)
     }
   }, [setupFen, load])
   const playerSide = setupSide ?? 'white'
-  const orientation = flipped ? opposite(playerSide) : playerSide
+  const engineSide = opposite(playerSide)
+  const orientation = flipped ? engineSide : playerSide
 
   const startFen = game.start?.fen
   const goalKey = JSON.stringify(goal)
@@ -151,20 +185,85 @@ export function PracticePage() {
     }
   }
 
-  const handleMove = async (uci: string) => {
-    const start = startedAt ?? Date.now()
-    setStartedAt(start)
-    const moves = await game.play(uci)
-    if (!moves) {
-      return
-    }
-    const result = await evaluate(moves)
+  const finishIfDecided = (result: GoalStatus | null, moves: string[], start: number) => {
     if (result && result.status !== 'in_progress') {
       const end = Date.now()
       setOutcome({ result: result.status, detail: result.detail })
       setEndedAt(end)
       saveAttempt(false, moves.slice(0, result.ply_count), start, end)
     }
+  }
+
+  const handleMove = async (uci: string) => {
+    const start = startedAt ?? Date.now()
+    setStartedAt(start)
+    if (engineActive) {
+      // The opponent must answer the new move, not replay its old reply from the history.
+      game.truncate()
+    }
+    const moves = await game.play(uci)
+    if (moves) {
+      finishIfDecided(await evaluate(moves), moves, start)
+    }
+  }
+
+  const acceptEngineReply = useEffectEvent((reply: EngineMoveResult, after: string[]) => {
+    const moves = pushPly({ uci: reply.uci, san: reply.san, position: reply.position }, after)
+    if (!moves) {
+      return null
+    }
+    setEngineReply(reply)
+    const start = startedAt ?? Date.now()
+    setStartedAt(start)
+    return { moves, start }
+  })
+  const settleAfterEngine = useEffectEvent(finishIfDecided)
+
+  const mode = modeOverride ?? setup?.opponentMode ?? 'manual'
+  const engineActive = mode !== 'manual'
+  const movesKey = game.moves.join(' ')
+  const requestKey = `${mode}|${thinkMs}|${movesKey}`
+  const engineTurn =
+    engineActive &&
+    !outcome &&
+    !game.busy &&
+    game.current !== null &&
+    game.cursor === game.plies.length &&
+    game.current.turn === engineSide &&
+    game.current.has_legal_moves
+  const thinking = engineTurn && engineError?.key !== requestKey
+
+  useEffect(() => {
+    if (!engineTurn || !startFen) {
+      return
+    }
+    let cancelled = false
+    const moves = movesKey ? movesKey.split(' ') : []
+    api.engineMove(startFen, moves, JSON.parse(goalKey) as Goal, mode, thinkMs).then(
+      async (reply) => {
+        // Accepting the reply changes the line, which re-runs this effect, so `cancelled`
+        // only guards the reply itself.
+        const accepted = cancelled ? null : acceptEngineReply(reply, moves)
+        if (accepted) {
+          settleAfterEngine(await evaluate(accepted.moves), accepted.moves, accepted.start)
+        }
+      },
+      (error) => {
+        if (!cancelled) {
+          // 409: the attempt was just decided by the previous move; the outcome shows that.
+          const decided = error instanceof ApiError && error.status === 409
+          setEngineError({ key: requestKey, message: decided ? '' : errorMessage(error) })
+        }
+      },
+    )
+    return () => {
+      cancelled = true
+    }
+  }, [engineTurn, startFen, movesKey, goalKey, mode, thinkMs, requestKey, evaluate])
+
+  const changeThinkTime = (value: number) => {
+    setThinkMs(value)
+    localStorage.setItem(THINK_TIME_KEY, String(value))
   }
 
   const giveUp = () => {
@@ -183,14 +282,30 @@ export function PracticePage() {
     setEndedAt(null)
     setHintPly(null)
     setSaveError(null)
+    setEngineReply(null)
+    setEngineError(null)
     savingRef.current = false
   }
 
   const { goTo, cursor } = game
+  const turnAt = (index: number) =>
+    index === 0 ? game.start?.turn : game.plies[index - 1]?.position.turn
+  // With a computer opponent, undo goes back to your previous turn (never before its opening move).
+  const firstPlayerPly = engineActive && game.start?.turn === engineSide ? 1 : 0
+  const skipEngineReply =
+    engineActive && !outcome && cursor - 1 > firstPlayerPly && turnAt(cursor - 1) === engineSide
+  const undoTarget = skipEngineReply ? cursor - 2 : cursor - 1
+  const canUndo = undoTarget >= (engineActive && !outcome ? firstPlayerPly : 0)
+  const undo = () => {
+    if (canUndo) {
+      goTo(undoTarget)
+    }
+  }
+  const canRedo = cursor < game.plies.length && !game.busy && (!engineActive || !!outcome)
   // Redo replays the move during an attempt so a decisive move still ends it.
   const redo = () => {
     const next = game.plies[cursor]
-    if (!next) {
+    if (!next || !canRedo) {
       return
     }
     if (outcome) {
@@ -202,11 +317,15 @@ export function PracticePage() {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) {
+      if (
+        event.target instanceof HTMLInputElement ||
+        event.target instanceof HTMLTextAreaElement ||
+        event.target instanceof HTMLSelectElement
+      ) {
         return
       }
       if (event.key === 'ArrowLeft') {
-        goTo(cursor - 1)
+        undo()
       } else if (event.key === 'ArrowRight') {
         redo()
       }
@@ -242,7 +361,11 @@ export function PracticePage() {
           id="practice"
           position={game.current}
           orientation={orientation}
-          onMove={!outcome && !game.busy ? handleMove : undefined}
+          onMove={
+            !outcome && !game.busy && !thinking && (!engineActive || game.current.turn === playerSide)
+              ? handleMove
+              : undefined
+          }
           lastMove={lastPly ? { from: lastPly.uci.slice(0, 2), to: lastPly.uci.slice(2, 4) } : null}
           arrows={
             hint
@@ -260,10 +383,10 @@ export function PracticePage() {
           <button onClick={() => goTo(0)} disabled={cursor === 0}>
             |&lt;
           </button>
-          <button onClick={() => goTo(cursor - 1)} disabled={cursor === 0}>
+          <button onClick={undo} disabled={!canUndo}>
             Undo
           </button>
-          <button onClick={redo} disabled={cursor === game.plies.length || game.busy}>
+          <button onClick={redo} disabled={!canRedo}>
             Redo
           </button>
           <button onClick={() => setFlipped(!flipped)}>Flip</button>
@@ -293,10 +416,57 @@ export function PracticePage() {
         </div>
         {setup.description && <p>{setup.description}</p>}
         <p className="muted">
-          You play {setup.playerSide}. Move both sides yourself. {capitalize(game.current.turn)} to
-          move.
+          You play {setup.playerSide}.{' '}
+          {engineActive ? `The computer plays ${engineSide}.` : 'Move both sides yourself.'}{' '}
+          {capitalize(game.current.turn)} to move.
           {cursor < game.plies.length && ' (Reviewing earlier position.)'}
         </p>
+
+        <div className="form-row">
+          <label>
+            Opponent
+            <select
+              value={mode}
+              onChange={(event) => setModeOverride(event.target.value as OpponentMode)}
+            >
+              {Object.entries(OPPONENT_LABELS).map(([value, label]) => {
+                const missing = value === 'stockfish' && engineStatus?.stockfish_available === false
+                return (
+                  <option key={value} value={value} disabled={missing}>
+                    {label}
+                    {missing ? ' (not installed)' : ''}
+                  </option>
+                )
+              })}
+            </select>
+          </label>
+          <label>
+            Think time
+            <select
+              value={thinkMs}
+              disabled={!engineActive}
+              onChange={(event) => changeThinkTime(Number(event.target.value))}
+            >
+              {THINK_TIMES_MS.map((ms) => (
+                <option key={ms} value={ms}>
+                  {ms / 1000}s
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        {engineActive && (thinking || engineReply) && (
+          <p className="muted">
+            {thinking
+              ? 'Thinking...'
+              : engineReply &&
+                `${ENGINE_LABELS[engineReply.engine]} played ${engineReply.san}` +
+                  `${engineReply.depth ? ` (depth ${engineReply.depth})` : ''}. ${engineReply.note}`}
+          </p>
+        )}
+        {engineError?.message && engineError.key === requestKey && (
+          <p className="message error">{engineError.message}</p>
+        )}
 
         <GoalPanel goal={goal} status={shownStatus} outcome={outcome} elapsedMs={elapsed} />
         {outcome && scenarioId === null && (

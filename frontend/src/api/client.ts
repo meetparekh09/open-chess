@@ -1,9 +1,12 @@
 import type {
   Attempt,
+  EngineMoveResult,
+  EngineStatus,
   ExportBundle,
   Goal,
   GoalStatus,
   MoveResult,
+  OpponentMode,
   PositionInfo,
   ScenarioDetail,
   Scenario,
@@ -64,6 +67,15 @@ export const api = {
     post<MoveResult>('/positions/move', { fen, move_uci: moveUci }),
   evaluateGoal: (startFen: string, goal: Goal, moves: string[]) =>
     post<GoalStatus>('/goals/evaluate', { start_fen: startFen, goal, moves }),
+  engineMove: (startFen: string, moves: string[], goal: Goal, mode: OpponentMode, thinkMs: number) =>
+    post<EngineMoveResult>('/engine/move', {
+      start_fen: startFen,
+      moves,
+      goal,
+      mode,
+      think_ms: thinkMs,
+    }),
+  engineStatus: () => request<EngineStatus>('/engine/status'),
 
   listScenarios: (filters: ScenarioFilters = {}) =>
     request<Scenario[]>(`/scenarios${query({ ...filters })}`),
