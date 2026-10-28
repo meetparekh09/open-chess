@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# The jobs run the same commands CONTRIBUTING.md asks for before a pull request:
+# make test, make lint and make build (plus a formatting check for the backend).
+jobs:
+  backend:
+    name: Backend (pytest, ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+      # Lets the Stockfish tests run instead of being skipped.
+      - name: Install Stockfish
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends stockfish
+      - name: Install dependencies
+        run: uv sync --locked
+        working-directory: backend
+      - name: Check formatting
+        run: uv run ruff format --check .
+        working-directory: backend
+      - name: Lint
+        run: uv run ruff check .
+        working-directory: backend
+      - name: Test
+        run: uv run pytest -q
+        working-directory: backend
+
+  frontend:
+    name: Frontend (oxlint, tsc, vite)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+        working-directory: frontend
+      - name: Lint
+        run: npm run lint
+        working-directory: frontend
+      # No-op until the frontend has a "test" script.
+      - name: Unit tests
+        run: npm run test --if-present
+        working-directory: frontend
+      - name: Type-check and build
+        run: npm run build
+        working-directory: frontend

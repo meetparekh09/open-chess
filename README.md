@@ -1,5 +1,7 @@
 # Open Chess
 
+[![CI](https://github.com/meetparekh09/open-chess/actions/workflows/ci.yml/badge.svg)](https://github.com/meetparekh09/open-chess/actions/workflows/ci.yml)
+
 A personal chess practice board for drilling *any* position, legal or not. Set up a queen
 against a lone knight with no kings on the board and practice how quickly you can trap it,
 or flip it around and see how long the knight can survive.
