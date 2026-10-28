@@ -112,6 +112,7 @@ frontend/               React + TypeScript + Vite
   src/pages/            Library, editor, practice, solution recorder
   src/components/       Board, palette, goal panel, move list, ...
   src/api/              Typed API client
+  src/lib/              Pure helpers (FEN, goal text) with their vitest tests alongside
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for how to contribute.

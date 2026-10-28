@@ -56,7 +56,8 @@ it changes how something looks).
    `backend/app/engine/goal_search.py`).
 4. Add the label and defaults in the frontend (`GOAL_LABELS` in `src/lib/chess.ts`,
    `defaultGoal` in `src/lib/scenario.ts`).
-5. Add tests in `backend/tests/test_goals.py` and `backend/tests/test_goal_search.py`.
+5. Add tests in `backend/tests/test_goals.py` and `backend/tests/test_goal_search.py`, and a
+   case for the new type in `frontend/src/lib/chess.test.ts` and `scenario.test.ts`.
 
 ### Adding an engine
 

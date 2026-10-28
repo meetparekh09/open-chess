@@ -10,6 +10,7 @@ SCENARIO = {
     "tags": ["Queen", "knight", "queen "],
 }
 WINNING_LINE = ["a1a2", "d5c3", "a2c2", "c3e4", "c2e4"]
+ATTEMPT_TIMES = {"started_at": "2026-10-27T10:00:00Z", "ended_at": "2026-10-27T10:00:30Z"}
 
 
 def create(client, **overrides):
@@ -103,19 +104,18 @@ def test_solution_and_position_change(client):
 def test_attempts_and_stats(client):
     scenario = create(client)
     url = f"/api/scenarios/{scenario['id']}/attempts"
-    times = {"started_at": "2026-10-27T10:00:00Z", "ended_at": "2026-10-27T10:00:30Z"}
 
-    response = client.post(url, json={**times, "moves": WINNING_LINE})
+    response = client.post(url, json={**ATTEMPT_TIMES, "moves": WINNING_LINE})
     assert response.status_code == 201
     attempt = response.json()
     assert attempt["result"] == "success"
     assert attempt["moves_used"] == 3
     assert attempt["duration_ms"] == 30000
 
-    abandoned = client.post(url, json={**times, "moves": ["a1a2"], "abandoned": True})
+    abandoned = client.post(url, json={**ATTEMPT_TIMES, "moves": ["a1a2"], "abandoned": True})
     assert abandoned.json()["result"] == "abandoned"
 
-    assert client.post(url, json={**times, "moves": ["a1b3"]}).status_code == 422
+    assert client.post(url, json={**ATTEMPT_TIMES, "moves": ["a1b3"]}).status_code == 422
     assert len(client.get(url).json()) == 2
 
     stats = client.get(f"/api/scenarios/{scenario['id']}").json()["stats"]
@@ -198,19 +198,18 @@ def test_update_keeps_solution_that_still_fits(client):
 
 def test_attempt_rejects_end_before_start(client):
     scenario = create(client)
-    response = client.post(
-        f"/api/scenarios/{scenario['id']}/attempts",
-        json={
-            "started_at": "2026-10-27T10:00:30Z",
-            "ended_at": "2026-10-27T10:00:00Z",
-            "moves": ["a1a2"],
-        },
-    )
+    backwards = {
+        "started_at": ATTEMPT_TIMES["ended_at"],
+        "ended_at": ATTEMPT_TIMES["started_at"],
+        "moves": ["a1a2"],
+    }
+    response = client.post(f"/api/scenarios/{scenario['id']}/attempts", json=backwards)
     assert response.status_code == 422
     assert "before" in response.json()["detail"]
 
 
-def test_survive_stats_prefer_success_then_longest_attempt(client):
+def test_survive_attempts_and_stats(client):
+    """The ranking rule itself is covered in test_scenario_service.py."""
     scenario = create(
         client,
         title="Knight survives",
@@ -218,17 +217,13 @@ def test_survive_stats_prefer_success_then_longest_attempt(client):
         goal={"type": "survive", "params": {"color": "black", "piece": "n", "max_moves": 3}},
     )
     url = f"/api/scenarios/{scenario['id']}/attempts"
-    times = {"started_at": "2026-10-27T10:00:00Z", "ended_at": "2026-10-27T10:00:10Z"}
-
-    captured = client.post(url, json={**times, "moves": ["a1d4", "d5c3", "d4c3"]}).json()
+    captured = client.post(url, json={**ATTEMPT_TIMES, "moves": ["a1d4", "d5c3", "d4c3"]}).json()
     assert captured["result"] == "fail"
     assert captured["moves_used"] == 2
-    stats = client.get(f"/api/scenarios/{scenario['id']}").json()["stats"]
-    assert stats["best"]["id"] == captured["id"]
-
     line = ["a1a2", "d5f4", "a2a3", "f4h3", "a3a4"]
-    survived = client.post(url, json={**times, "moves": line}).json()
+    survived = client.post(url, json={**ATTEMPT_TIMES, "moves": line}).json()
     assert survived["result"] == "success"
     assert survived["moves_used"] == 3
+
     stats = client.get(f"/api/scenarios/{scenario['id']}").json()["stats"]
-    assert stats == {"count": 2, "success_count": 1, "best": survived}
+    assert (stats["count"], stats["success_count"], stats["best"]["id"]) == (2, 1, survived["id"])

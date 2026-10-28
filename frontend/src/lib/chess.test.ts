@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import type { Goal } from '../api/types'
 import {
   EMPTY_FEN,
   START_FEN,
@@ -19,13 +20,13 @@ describe('fenToPlacement and placementToFen', () => {
     expect(placement.e1).toBe('wK')
     expect(placement.d8).toBe('bQ')
     expect(Object.keys(placement)).toHaveLength(32)
-    expect(placementToFen(placement)).toBe(START_FEN.split(' ')[0])
+    expect(placementToFen(placement)).toBe('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR')
   })
 
   it('handles sparse boards and board-only FENs', () => {
     expect(fenToPlacement('8/8/8/3n4/8/8/8/Q7')).toEqual({ d5: 'bN', a1: 'wQ' })
     expect(placementToFen({ d5: 'bN', a1: 'wQ' })).toBe('8/8/8/3n4/8/8/8/Q7')
-    expect(placementToFen({})).toBe(EMPTY_FEN.split(' ')[0])
+    expect(placementToFen(fenToPlacement(EMPTY_FEN))).toBe('8/8/8/8/8/8/8/8')
   })
 })
 
@@ -52,26 +53,24 @@ describe('squaresWithPiece', () => {
 })
 
 describe('describeGoal', () => {
-  it('describes every goal type', () => {
-    expect(describeGoal({ type: 'free', params: {} })).toBe('Free practice')
-    expect(describeGoal({ type: 'capture', params: { color: 'black', piece: 'n' } })).toBe(
-      'Capture the black knight',
-    )
-    expect(
-      describeGoal({
-        type: 'capture',
-        params: { color: 'black', piece: 'n', square: 'd5', max_moves: 1 },
-      }),
-    ).toBe('Capture the black knight on d5 within 1 move')
-    expect(
-      describeGoal({ type: 'survive', params: { color: 'white', piece: 'r', max_moves: 10 } }),
-    ).toBe('Keep the white rook alive for 10 moves')
-    expect(describeGoal({ type: 'checkmate', params: { color: 'black', max_moves: 3 } })).toBe(
+  it.each<[Goal, string]>([
+    [{ type: 'free', params: {} }, 'Free practice'],
+    [{ type: 'capture', params: { color: 'black', piece: 'n' } }, 'Capture the black knight'],
+    [
+      { type: 'capture', params: { color: 'black', piece: 'n', square: 'd5', max_moves: 1 } },
+      'Capture the black knight on d5 within 1 move',
+    ],
+    [
+      { type: 'survive', params: { color: 'white', piece: 'r', max_moves: 10 } },
+      'Keep the white rook alive for 10 moves',
+    ],
+    [
+      { type: 'checkmate', params: { color: 'black', max_moves: 3 } },
       'Black delivers checkmate within 3 moves',
-    )
-    expect(describeGoal({ type: 'promote', params: { color: 'white' } })).toBe(
-      'White promotes a pawn',
-    )
+    ],
+    [{ type: 'promote', params: { color: 'white' } }, 'White promotes a pawn'],
+  ])('describes %j', (goal, text) => {
+    expect(describeGoal(goal)).toBe(text)
   })
 })
 

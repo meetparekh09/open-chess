@@ -94,7 +94,7 @@ backend: ## Run only the API (http://localhost:8000, docs at /docs)
 frontend: ## Run only the UI (http://localhost:5173)
 	cd frontend && npm run dev
 
-test: ## Run backend tests (pytest) and frontend unit tests (vitest)
+test: ## Run backend and frontend tests
 	cd backend && uv run pytest -q
 	cd frontend && npm test
 
