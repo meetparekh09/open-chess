@@ -10,6 +10,7 @@ SCENARIO = {
     "tags": ["Queen", "knight", "queen "],
 }
 WINNING_LINE = ["a1a2", "d5c3", "a2c2", "c3e4", "c2e4"]
+ATTEMPT_TIMES = {"started_at": "2026-10-27T10:00:00Z", "ended_at": "2026-10-27T10:00:30Z"}
 
 
 def create(client, **overrides):
@@ -103,19 +104,18 @@ def test_solution_and_position_change(client):
 def test_attempts_and_stats(client):
     scenario = create(client)
     url = f"/api/scenarios/{scenario['id']}/attempts"
-    times = {"started_at": "2026-10-27T10:00:00Z", "ended_at": "2026-10-27T10:00:30Z"}
 
-    response = client.post(url, json={**times, "moves": WINNING_LINE})
+    response = client.post(url, json={**ATTEMPT_TIMES, "moves": WINNING_LINE})
     assert response.status_code == 201
     attempt = response.json()
     assert attempt["result"] == "success"
     assert attempt["moves_used"] == 3
     assert attempt["duration_ms"] == 30000
 
-    abandoned = client.post(url, json={**times, "moves": ["a1a2"], "abandoned": True})
+    abandoned = client.post(url, json={**ATTEMPT_TIMES, "moves": ["a1a2"], "abandoned": True})
     assert abandoned.json()["result"] == "abandoned"
 
-    assert client.post(url, json={**times, "moves": ["a1b3"]}).status_code == 422
+    assert client.post(url, json={**ATTEMPT_TIMES, "moves": ["a1b3"]}).status_code == 422
     assert len(client.get(url).json()) == 2
 
     stats = client.get(f"/api/scenarios/{scenario['id']}").json()["stats"]
@@ -162,3 +162,68 @@ def test_export_import_roundtrip(client):
     response = client.post("/api/scenarios/import", json=bundle)
     assert response.status_code == 422
     assert len(client.get("/api/scenarios").json()) == 2
+
+
+def test_health(client):
+    assert client.get("/api/health").json() == {"status": "ok"}
+
+
+def test_tag_filter_ignores_case_and_whitespace(client):
+    create(client)
+    assert len(client.get("/api/scenarios?tag=%20Knight%20").json()) == 1
+    assert client.get("/api/scenarios?tag=rook").json() == []
+
+
+def test_export_selected_scenarios(client):
+    first = create(client)
+    second = create(client, title="Second")
+    bundle = client.get(f"/api/scenarios/export?ids={second['id']}").json()
+    assert [s["title"] for s in bundle["scenarios"]] == ["Second"]
+    bundle = client.get(f"/api/scenarios/export?ids={first['id']}&ids={second['id']}").json()
+    assert len(bundle["scenarios"]) == 2
+
+
+def test_update_keeps_solution_that_still_fits(client):
+    scenario = create(client)
+    client.put(f"/api/scenarios/{scenario['id']}/solution", json={"steps": [{"move_uci": "a1a2"}]})
+    # An extra black pawn does not make Qa2 illegal, so the solution survives the edit.
+    response = client.put(
+        f"/api/scenarios/{scenario['id']}", json={**SCENARIO, "start_fen": "8/7p/8/3n4/8/8/8/Q7"}
+    )
+    assert response.status_code == 200
+    solution = response.json()["solution"]
+    assert [s["san"] for s in solution] == ["Qa2"]
+    assert solution[0]["fen_after"] == "8/7p/8/3n4/8/8/Q7/8 b - - 1 1"
+
+
+def test_attempt_rejects_end_before_start(client):
+    scenario = create(client)
+    backwards = {
+        "started_at": ATTEMPT_TIMES["ended_at"],
+        "ended_at": ATTEMPT_TIMES["started_at"],
+        "moves": ["a1a2"],
+    }
+    response = client.post(f"/api/scenarios/{scenario['id']}/attempts", json=backwards)
+    assert response.status_code == 422
+    assert "before" in response.json()["detail"]
+
+
+def test_survive_attempts_and_stats(client):
+    """The ranking rule itself is covered in test_scenario_service.py."""
+    scenario = create(
+        client,
+        title="Knight survives",
+        player_side="black",
+        goal={"type": "survive", "params": {"color": "black", "piece": "n", "max_moves": 3}},
+    )
+    url = f"/api/scenarios/{scenario['id']}/attempts"
+    captured = client.post(url, json={**ATTEMPT_TIMES, "moves": ["a1d4", "d5c3", "d4c3"]}).json()
+    assert captured["result"] == "fail"
+    assert captured["moves_used"] == 2
+    line = ["a1a2", "d5f4", "a2a3", "f4h3", "a3a4"]
+    survived = client.post(url, json={**ATTEMPT_TIMES, "moves": line}).json()
+    assert survived["result"] == "success"
+    assert survived["moves_used"] == 3
+
+    stats = client.get(f"/api/scenarios/{scenario['id']}").json()["stats"]
+    assert (stats["count"], stats["success_count"], stats["best"]["id"]) == (2, 1, survived["id"])

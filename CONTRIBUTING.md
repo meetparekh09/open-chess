@@ -16,7 +16,7 @@ make dev         # API on :8000, UI on :5173, both with live reload
 
 ```bash
 make fmt     # format and auto-fix Python
-make test    # backend tests
+make test    # backend (pytest) and frontend (vitest) tests
 make lint    # ruff + oxlint
 make build   # TypeScript type-check and production build
 ```
@@ -33,7 +33,8 @@ it changes how something looks).
   hints on public functions. Tests go in `backend/tests/`, one file per module or feature.
 - **TypeScript/React**: 2-space indentation, linted with oxlint (including the React Compiler
   rules). Keep API types in `frontend/src/api/types.ts` in sync with
-  `backend/app/schemas.py`.
+  `backend/app/schemas.py`. Unit tests for pure helpers (`src/lib/`) live next to the code
+  as `*.test.ts` and run with vitest.
 - Keep comments for things the code cannot say on its own (constraints, non-obvious reasons).
 
 ## How the pieces fit together
@@ -55,7 +56,8 @@ it changes how something looks).
    `backend/app/engine/goal_search.py`).
 4. Add the label and defaults in the frontend (`GOAL_LABELS` in `src/lib/chess.ts`,
    `defaultGoal` in `src/lib/scenario.ts`).
-5. Add tests in `backend/tests/test_goals.py` and `backend/tests/test_goal_search.py`.
+5. Add tests in `backend/tests/test_goals.py` and `backend/tests/test_goal_search.py`, and a
+   case for the new type in `frontend/src/lib/chess.test.ts` and `scenario.test.ts`.
 
 ### Adding an engine
 
