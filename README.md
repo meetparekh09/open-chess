@@ -91,7 +91,7 @@ scenarios as JSON.
 | --- | --- |
 | `make dev` | API and UI with live reload |
 | `make backend` / `make frontend` | Run one side only |
-| `make test` | Backend tests (pytest) |
+| `make test` | Backend tests (pytest) and frontend unit tests (vitest) |
 | `make lint` | ruff (backend) and oxlint (frontend) |
 | `make fmt` | Format and auto-fix backend code |
 | `make build` | Type-check and build the frontend |

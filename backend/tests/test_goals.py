@@ -108,3 +108,68 @@ def test_free_goal_and_illegal_moves():
     assert status.status == "in_progress"
     with pytest.raises(IllegalMoveError, match="Move 1"):
         evaluate_goal(goal, QUEEN_VS_KNIGHT, ["d5c3"])
+
+
+def test_follows_the_target_through_castling():
+    # Black castles queenside, so the rook that started on a8 is on d8 when it is taken.
+    fen = "r3k3/8/8/8/8/8/8/7R w q - 0 1"
+    goal = Goal(type="capture", params=GoalParams(color="black", piece="r", square="a8"))
+    line = ["h1h2", "e8c8", "h2h8", "c8b8", "h8d8"]
+    assert evaluate_goal(goal, fen, line[:-1]).status == "in_progress"
+    status = evaluate_goal(goal, fen, line)
+    assert status.status == "success"
+    assert status.detail == "Captured the rook in 3 moves."
+
+
+def test_survive_tracks_specific_piece():
+    fen = "8/8/8/3n4/8/8/8/Qn6 w - - 0 1"
+    goal = Goal(
+        type="survive", params=GoalParams(color="black", piece="n", square="d5", max_moves=2)
+    )
+    # Losing the other knight does not matter.
+    assert evaluate_goal(goal, fen, ["a1b1"]).status == "in_progress"
+    assert evaluate_goal(goal, fen, ["a1b1", "d5f4", "b1b2"]).status == "success"
+
+
+def test_goal_is_decided_when_the_defender_cannot_move():
+    # The knight on a8 is boxed in by its own pawns, which are blocked by white's.
+    fen = "n7/2p5/1pP5/1P6/8/8/8/7Q b - - 0 1"
+    status = evaluate_goal(capture_knight(), fen, [])
+    assert status.status == "fail"
+    assert status.detail == "Black has no legal moves."
+    survive = Goal(type="survive", params=GoalParams(color="black", piece="n", max_moves=5))
+    status = evaluate_goal(survive, fen, [])
+    assert status.status == "success"
+    assert status.detail == "No legal moves left; the knight survived."
+
+
+def test_checkmate_move_limit():
+    fen = "6k1/5ppp/8/8/8/8/8/R5K1 w - - 0 1"
+    goal = Goal(type="checkmate", params=GoalParams(color="white", max_moves=1))
+    status = evaluate_goal(goal, fen, ["a1a7"])
+    assert status.status == "fail"
+    assert status.detail == "No checkmate within 1 move."
+    assert evaluate_goal(goal, fen, ["a1a8"]).status == "success"
+
+
+def test_promote_fails_within_limit_or_without_pawns():
+    limited = Goal(type="promote", params=GoalParams(color="white", max_moves=1))
+    status = evaluate_goal(limited, "8/8/1P6/8/8/8/8/8 w - - 0 1", ["b6b7"])
+    assert status.status == "fail"
+    assert status.detail == "No promotion within 1 move."
+
+    goal = Goal(type="promote", params=GoalParams(color="white"))
+    status = evaluate_goal(goal, "8/1P6/8/8/8/8/8/1r6 b - - 0 1", ["b1b7"])
+    assert status.status == "fail"
+    assert status.detail == "No pawns left to promote."
+
+
+def test_goal_validation_messages():
+    with pytest.raises(GoalError, match="is not a square"):
+        evaluate_goal(capture_knight(square="z9"), QUEEN_VS_KNIGHT, [])
+    with pytest.raises(GoalError, match="no black knight on d4"):
+        evaluate_goal(capture_knight(square="d4"), QUEEN_VS_KNIGHT, [])
+    with pytest.raises(GoalError, match="needs a color"):
+        evaluate_goal(Goal(type="promote"), QUEEN_VS_KNIGHT, [])
+    with pytest.raises(GoalError, match="no pawns"):
+        evaluate_goal(Goal(type="promote", params=GoalParams(color="white")), QUEEN_VS_KNIGHT, [])
