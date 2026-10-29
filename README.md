@@ -116,6 +116,11 @@ frontend/               React + TypeScript + Vite
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for how to contribute.
 
+## Ideas
+
+Feature ideas live on the [Open Chess Ideas board](https://claude.ai/artifact/BBJ8rcPj1VXkdPczBEGnj1).
+Like the ones you want built; collaborators approve or reject them there before work starts.
+
 ## License
 
 Open Chess is free software, licensed under the [GNU General Public License v3.0 or later](LICENSE).
